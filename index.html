@@ -55,7 +55,7 @@
   <script>
     const chat = document.getElementById('chat');
     const input = document.getElementById('userInput');
-    const apiKey = 'AIzaSyC0F0Qirjz9uRl1FpcpkgTRTt4s3PbQkxg'; // Replace this
+    const apiKey = 'YOUR_API_KEY_HERE'; // Replace this securely later
 
     function addMessage(message, sender) {
       const msgDiv = document.createElement('div');
@@ -66,8 +66,8 @@
     }
 
     async function sendMessage() {
-      const userMsg = input.value;
-      if (!userMsg.trim()) return;
+      const userMsg = input.value.trim();
+      if (!userMsg) return;
       addMessage(userMsg, 'user');
       input.value = '';
 
@@ -80,24 +80,27 @@
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            contents: [
-              {
-                parts: [{ text: userMsg }]
-              }
-            ]
+            contents: [{ role: "user", parts: [{ text: userMsg }] }]
           })
         });
 
         const data = await response.json();
-        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "No response.";
 
-        chat.removeChild(chat.lastChild);
-        addMessage(reply, 'bot');
+        console.log('Response:', data); // helpful for debugging
+
+        chat.removeChild(chat.lastChild); // remove '...'
+
+        const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (reply) {
+          addMessage(reply, 'bot');
+        } else {
+          addMessage('No valid response from Gemini.', 'bot');
+        }
 
       } catch (error) {
-        console.error(error);
+        console.error('Fetch error:', error);
         chat.removeChild(chat.lastChild);
-        addMessage('Error fetching response. Check console.', 'bot');
+        addMessage('Error fetching response. See console for details.', 'bot');
       }
     }
 
