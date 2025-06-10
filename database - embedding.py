@@ -51,7 +51,11 @@ model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 embeddings = model.encode(texts).tolist()
 
 # 5. Store in ChromaDB
-chroma_client = chromadb.Client(Settings(persist_directory="./chroma_store"))
+chroma_client = chromadb.Client(Settings(
+    persist_directory="./chroma_store",
+    is_persistent=True
+))
+
 collection = chroma_client.get_or_create_collection("powerbi")
 
 ids = [str(uuid.uuid4()) for _ in texts]
