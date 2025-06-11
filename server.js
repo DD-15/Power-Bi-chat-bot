@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { Chroma } from "@langchain/community/vectorstores/chroma";
 import { GoogleGenerativeAIEmbeddings } from "@langchain/google-genai";
-import { RetrievalQAChain } from "langchain/chains";
+import { RunnableSequence } from "@langchain/core/runnables";
 
 dotenv.config();
 const app = express();
@@ -21,18 +21,40 @@ const embeddings = new GoogleGenerativeAIEmbeddings({
   apiKey: process.env.GEMINI_API_KEY,
 });
 
-const vectorstore = await Chroma.fromExistingCollection(
-  embeddings,
-  {
-    collectionName: "powerbi",
-    url: "http://localhost:8000",
-    embeddingFunction: embeddings, // ✅ This is what fixes the crash
-  }
-);
+const vectorstore = await Chroma.fromExistingCollection(embeddings, {
+  collectionName: "powerbi",
+  url: "http://localhost:8000",
+  embeddingFunction: embeddings,
+});
 
-// Setup RetrievalQAChain
-const chain = RetrievalQAChain.fromLLM(model, vectorstore.asRetriever());
+// Setup retrieval + response chain using RunnableSequence
+const retriever = vectorstore.asRetriever();
 
+const chain = RunnableSequence.from([
+  async (question) => {
+    const docs = await retriever.getRelevantDocuments(question);
+    return {
+      input: question,
+      context: docs.map(doc => doc.pageContent).join("\n"),
+    };
+  },
+  async ({ input, context }) => {
+    const response = await model.invoke([
+      {
+        role: "user",
+        content: `Context:\n${context}\n\nQuestion: ${input}`,
+      },
+    ]);
+    return { text: response.content };
+  },
+]);
+
+// Health check route
+app.get("/", (req, res) => {
+  res.send("✅ LangChain Gemini API is running");
+});
+
+// POST /ask endpoint
 app.post("/ask", async (req, res) => {
   const { question } = req.body;
 
@@ -41,7 +63,7 @@ app.post("/ask", async (req, res) => {
   }
 
   try {
-    const result = await chain.call({ query: question });
+    const result = await chain.invoke(question);
     res.json({ answer: result.text });
   } catch (error) {
     console.error("❌ Error:", error);
