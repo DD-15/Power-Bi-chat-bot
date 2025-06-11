@@ -56,20 +56,23 @@ app.get("/", (req, res) => {
 
 // POST /ask endpoint
 app.post("/ask", async (req, res) => {
-  const { question } = req.body;
-
-  if (!question) {
-    return res.status(400).json({ error: "Missing question" });
-  }
-
   try {
+    const { question } = req.body;
+    console.log("🔹 Question received:", question);
+
+    if (!question) {
+      return res.status(400).json({ error: "Missing question" });
+    }
+
     const result = await chain.invoke({ input: question });
-    res.json({ answer: result.text });
+    console.log("🔹 Chain result:", result);
+    return res.json({ answer: result.text });
   } catch (error) {
-    console.error("❌ Error:", error);
-    res.status(500).json({ error: "Failed to generate answer" });
+    console.error("❌ /ask error:", error);
+    return res.status(500).json({ error: error.message || "Internal error" });
   }
 });
+
 
 app.listen(3000, () => {
   console.log("✅ LangChain Gemini API running at http://localhost:3000");
