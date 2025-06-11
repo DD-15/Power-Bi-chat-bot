@@ -31,11 +31,11 @@ const vectorstore = await Chroma.fromExistingCollection(embeddings, {
 const retriever = vectorstore.asRetriever();
 
 const chain = RunnableSequence.from([
-  async (question) => {
-    const docs = await retriever.getRelevantDocuments(question);
+  async ({ input }) => {
+    const docs = await retriever.invoke(input); // ✅ Modern replacement for deprecated getRelevantDocuments
     return {
-      input: question,
-      context: docs.map(doc => doc.pageContent).join("\n"),
+      input,
+      context: docs.map((doc) => doc.pageContent).join("\n"),
     };
   },
   async ({ input, context }) => {
@@ -63,7 +63,7 @@ app.post("/ask", async (req, res) => {
   }
 
   try {
-    const result = await chain.invoke(question);
+    const result = await chain.invoke({ input: question });
     res.json({ answer: result.text });
   } catch (error) {
     console.error("❌ Error:", error);
