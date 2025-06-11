@@ -2,7 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { Chroma } from "@langchain/community/vectorstores/chroma";
-import { GoogleGenerativeAIEmbeddings } from "@langchain/google-genai";
+import { HuggingFaceTransformersEmbeddings } from "@langchain/community/embeddings/hf_transformers";
 import { RunnableSequence } from "@langchain/core/runnables";
 
 dotenv.config();
@@ -16,11 +16,12 @@ const model = new ChatGoogleGenerativeAI({
   temperature: 0.3,
 });
 
-// Load Chroma vector store
-const embeddings = new GoogleGenerativeAIEmbeddings({
-  apiKey: process.env.GEMINI_API_KEY,
+// ✅ Use HuggingFace (same as Python) to ensure embedding match
+const embeddings = new HuggingFaceTransformersEmbeddings({
+  modelName: "sentence-transformers/all-MiniLM-L6-v2",
 });
 
+// Load Chroma vector store
 const vectorstore = await Chroma.fromExistingCollection(embeddings, {
   collectionName: "powerbi",
   url: "http://localhost:8000",
@@ -32,7 +33,7 @@ const retriever = vectorstore.asRetriever();
 
 const chain = RunnableSequence.from([
   async ({ input }) => {
-    const docs = await retriever.invoke(input); // ✅ Modern replacement for deprecated getRelevantDocuments
+    const docs = await retriever.invoke(input);
     return {
       input,
       context: docs.map((doc) => doc.pageContent).join("\n"),
@@ -72,7 +73,6 @@ app.post("/ask", async (req, res) => {
     return res.status(500).json({ error: error.message || "Internal error" });
   }
 });
-
 
 app.listen(3000, () => {
   console.log("✅ LangChain Gemini API running at http://localhost:3000");
