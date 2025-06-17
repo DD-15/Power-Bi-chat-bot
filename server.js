@@ -1,9 +1,12 @@
 import express from "express";
 import dotenv from "dotenv";
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import {
+  ChatGoogleGenerativeAI,
+  GoogleGenerativeAIEmbeddings,
+} from "@langchain/google-genai";
 import { Chroma } from "@langchain/community/vectorstores/chroma";
-import { HuggingFaceTransformersEmbeddings } from "@langchain/community/embeddings/hf_transformers";
 import { RunnableSequence } from "@langchain/core/runnables";
+import { Document } from "@langchain/core/documents";
 
 dotenv.config();
 const app = express();
@@ -16,57 +19,129 @@ const model = new ChatGoogleGenerativeAI({
   temperature: 0.3,
 });
 
-// ✅ Use HuggingFace (same as Python) to ensure embedding match
-const embeddings = new HuggingFaceTransformersEmbeddings({
-  modelName: "sentence-transformers/all-MiniLM-L6-v2",
+// Use Gemini's embedding model
+const rawEmbedder = new GoogleGenerativeAIEmbeddings({
+  apiKey: process.env.GEMINI_API_KEY,
 });
 
-// Load Chroma vector store
-const vectorstore = await Chroma.fromExistingCollection(embeddings, {
-  collectionName: "powerbi",
-  url: "http://localhost:8000",
-  embeddingFunction: embeddings,
-});
+const embeddings = {
+  embedQuery: async (text) => {
+    const result = await rawEmbedder.embedQuery(text);
+    if (result && Array.isArray(result.values)) return [result.values];
+    if (Array.isArray(result)) return [result];
+    throw new Error("❌ embedQuery returned unexpected format");
+  },
+  embedDocuments: async (docs) => {
+    const results = await rawEmbedder.embedDocuments(docs);
+    return results.map((r, i) => {
+      if (r && Array.isArray(r.values)) return r.values;
+      if (Array.isArray(r)) return r;
+      throw new Error(`❌ embedDocuments doc ${i} invalid format`);
+    });
+  },
+};
 
-// Setup retrieval + response chain using RunnableSequence
+// Ingest block (run only once)
+const ingestDocuments = async () => {
+  const docs = [
+    new Document({
+      pageContent: `Reference ID: r4J9H6M\nDatetime: 2025-06-04`,
+      metadata: { "Reference ID": "r4J9H6M", Datetime: "2025-06-04" },
+    }),
+    new Document({
+      pageContent: `Reference ID: stgVtdq\nDatetime: 2025-05-31`,
+      metadata: { "Reference ID": "stgVtdq", Datetime: "2025-05-31" },
+    }),
+    new Document({
+      pageContent: `Reference ID: zxYp31k\nDatetime: 2025-06-01`,
+      metadata: { "Reference ID": "zxYp31k", Datetime: "2025-06-01" },
+    }),
+  ];
+
+  const vectorstore = await Chroma.fromDocuments(docs, embeddings, {
+    collectionName: "powerbi_gemini",
+    url: "http://localhost:8000",
+  });
+
+  console.log("✅ Vectorstore initialized with fresh documents");
+  return vectorstore;
+};
+
+// Load from existing Chroma collection
+const loadExistingVectorstore = async () => {
+  const vectorstore = await Chroma.fromExistingCollection(embeddings, {
+    collectionName: "powerbi_gemini",
+    url: "http://localhost:8000",
+    embeddingFunction: embeddings,
+  });
+
+  console.log("✅ Vectorstore loaded from existing collection");
+  return vectorstore;
+};
+
+// ⚠️ Use only one: comment/uncomment accordingly
+// const vectorstore = await ingestDocuments();
+const vectorstore = await loadExistingVectorstore();
+
 const retriever = vectorstore.asRetriever();
 
+// Chain: question → retrieve → format → Gemini
 const chain = RunnableSequence.from([
   async ({ input }) => {
     const docs = await retriever.invoke(input);
-    return {
-      input,
-      context: docs.map((doc) => doc.pageContent).join("\n"),
-    };
+
+    const metadataSummary = docs.map((doc, i) => {
+      const ref = doc.metadata?.["Reference ID"] || `Doc${i+1}`;
+      const dt = doc.metadata?.Datetime || "N/A";
+      return `- Reference ID: ${ref}, Date: ${dt}`;
+    }).join("\n");
+
+    const context = docs.map((doc, i) => {
+      const ref = doc.metadata?.["Reference ID"] || `Doc${i+1}`;
+      const dt = doc.metadata?.Datetime || "N/A";
+      return `---\nReference ID: ${ref}\nDate: ${dt}\n---`;
+    }).join("\n");
+
+    return { input, context, metadataSummary };
   },
-  async ({ input, context }) => {
+  async ({ input, context, metadataSummary }) => {
     const response = await model.invoke([
       {
         role: "user",
-        content: `Context:\n${context}\n\nQuestion: ${input}`,
+        content: `
+You are a data analyst assistant working with Power BI usage logs. Each record includes only a Reference ID and a Datetime.
+
+Based on the records retrieved below, help answer the user's analytics question.
+
+Metadata Summary:
+${metadataSummary}
+
+Context:
+${context}
+
+Question:
+${input}
+        `.trim(),
       },
     ]);
     return { text: response.content };
   },
 ]);
 
-// Health check route
+// Health check
 app.get("/", (req, res) => {
   res.send("✅ LangChain Gemini API is running");
 });
 
-// POST /ask endpoint
+// Ask endpoint
 app.post("/ask", async (req, res) => {
   try {
     const { question } = req.body;
-    console.log("🔹 Question received:", question);
-
     if (!question) {
       return res.status(400).json({ error: "Missing question" });
     }
 
     const result = await chain.invoke({ input: question });
-    console.log("🔹 Chain result:", result);
     return res.json({ answer: result.text });
   } catch (error) {
     console.error("❌ /ask error:", error);
