@@ -45,15 +45,15 @@ const embeddings = {
 const ingestDocuments = async () => {
   const docs = [
     new Document({
-      pageContent: `Reference ID: r4J9H6M\nDatetime: 2025-06-04`,
+      pageContent: "Reference ID: r4J9H6M\nDatetime: 2025-06-04",
       metadata: { "Reference ID": "r4J9H6M", Datetime: "2025-06-04" },
     }),
     new Document({
-      pageContent: `Reference ID: stgVtdq\nDatetime: 2025-05-31`,
+      pageContent: "Reference ID: stgVtdq\nDatetime: 2025-05-31",
       metadata: { "Reference ID": "stgVtdq", Datetime: "2025-05-31" },
     }),
     new Document({
-      pageContent: `Reference ID: zxYp31k\nDatetime: 2025-06-01`,
+      pageContent: "Reference ID: zxYp31k\nDatetime: 2025-06-01",
       metadata: { "Reference ID": "zxYp31k", Datetime: "2025-06-01" },
     }),
   ];
@@ -70,7 +70,7 @@ const ingestDocuments = async () => {
 // Load from existing Chroma collection
 const loadExistingVectorstore = async () => {
   const vectorstore = await Chroma.fromExistingCollection(embeddings, {
-    collectionName: "powerbi_gemini",
+    collectionName: "powerbi",
     url: "http://localhost:8000",
     embeddingFunction: embeddings,
   });
@@ -79,36 +79,41 @@ const loadExistingVectorstore = async () => {
   return vectorstore;
 };
 
-// ⚠️ Use only one: comment/uncomment accordingly
-// const vectorstore = await ingestDocuments();
-const vectorstore = await loadExistingVectorstore();
+const main = async () => {
+  // ⚠️ Use only one: comment/uncomment accordingly
+  // const vectorstore = await ingestDocuments();
+  const vectorstore = await loadExistingVectorstore();
 
-const retriever = vectorstore.asRetriever();
+  // ✅ Debug log (after vectorstore is ready)
+  const results = await vectorstore.similaritySearch("reference id", 10);
+  console.log("🔍 Retrieved documents:", results.map(doc => doc.pageContent));
 
-// Chain: question → retrieve → format → Gemini
-const chain = RunnableSequence.from([
-  async ({ input }) => {
-    const docs = await retriever.invoke(input);
+  const retriever = vectorstore.asRetriever();
 
-    const metadataSummary = docs.map((doc, i) => {
-      const ref = doc.metadata?.["Reference ID"] || `Doc${i+1}`;
-      const dt = doc.metadata?.Datetime || "N/A";
-      return `- Reference ID: ${ref}, Date: ${dt}`;
-    }).join("\n");
+  // Chain: question → retrieve → format → Gemini
+  const chain = RunnableSequence.from([
+    async ({ input }) => {
+      const docs = await retriever.invoke(input);
 
-    const context = docs.map((doc, i) => {
-      const ref = doc.metadata?.["Reference ID"] || `Doc${i+1}`;
-      const dt = doc.metadata?.Datetime || "N/A";
-      return `---\nReference ID: ${ref}\nDate: ${dt}\n---`;
-    }).join("\n");
+      const metadataSummary = docs.map((doc, i) => {
+        const ref = doc.metadata?.["Reference ID"] || `Doc${i + 1}`;
+        const dt = doc.metadata?.Datetime || "N/A";
+        return `- Reference ID: ${ref}, Date: ${dt}`;
+      }).join("\n");
 
-    return { input, context, metadataSummary };
-  },
-  async ({ input, context, metadataSummary }) => {
-    const response = await model.invoke([
-      {
-        role: "user",
-        content: `
+      const context = docs.map((doc, i) => {
+        const ref = doc.metadata?.["Reference ID"] || `Doc${i + 1}`;
+        const dt = doc.metadata?.Datetime || "N/A";
+        return `---\nReference ID: ${ref}\nDate: ${dt}\n---`;
+      }).join("\n");
+
+      return { input, context, metadataSummary };
+    },
+    async ({ input, context, metadataSummary }) => {
+      const response = await model.invoke([
+        {
+          role: "user",
+          content: `
 You are a data analyst assistant working with Power BI usage logs. Each record includes only a Reference ID and a Datetime.
 
 Based on the records retrieved below, help answer the user's analytics question.
@@ -121,34 +126,37 @@ ${context}
 
 Question:
 ${input}
-        `.trim(),
-      },
-    ]);
-    return { text: response.content };
-  },
-]);
+          `.trim(),
+        },
+      ]);
+      return { text: response.content };
+    },
+  ]);
 
-// Health check
-app.get("/", (req, res) => {
-  res.send("✅ LangChain Gemini API is running");
-});
+  // Health check
+  app.get("/", (req, res) => {
+    res.send("✅ LangChain Gemini API is running");
+  });
 
-// Ask endpoint
-app.post("/ask", async (req, res) => {
-  try {
-    const { question } = req.body;
-    if (!question) {
-      return res.status(400).json({ error: "Missing question" });
+  // Ask endpoint
+  app.post("/ask", async (req, res) => {
+    try {
+      const { question } = req.body;
+      if (!question) {
+        return res.status(400).json({ error: "Missing question" });
+      }
+
+      const result = await chain.invoke({ input: question });
+      return res.json({ answer: result.text });
+    } catch (error) {
+      console.error("❌ /ask error:", error);
+      return res.status(500).json({ error: error.message || "Internal error" });
     }
+  });
 
-    const result = await chain.invoke({ input: question });
-    return res.json({ answer: result.text });
-  } catch (error) {
-    console.error("❌ /ask error:", error);
-    return res.status(500).json({ error: error.message || "Internal error" });
-  }
-});
+  app.listen(3000, () => {
+    console.log("✅ LangChain Gemini API running at http://localhost:3000");
+  });
+};
 
-app.listen(3000, () => {
-  console.log("✅ LangChain Gemini API running at http://localhost:3000");
-});
+main().catch(console.error);
