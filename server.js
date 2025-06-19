@@ -15,7 +15,7 @@ app.use(express.json());
 // Initialize Gemini model
 const model = new ChatGoogleGenerativeAI({
   apiKey: process.env.GEMINI_API_KEY,
-  model: "gemini-1.5-flash",
+  model: "gemini-2.5-flash",
   temperature: 0.3,
 });
 
@@ -59,13 +59,14 @@ const ingestDocuments = async () => {
   ];
 
   const vectorstore = await Chroma.fromDocuments(docs, embeddings, {
-    collectionName: "powerbi_gemini",
+    collectionName: "powerbi", // ✅ Matches the collection used in loadExistingVectorstore
     url: "http://localhost:8000",
   });
 
   console.log("✅ Vectorstore initialized with fresh documents");
   return vectorstore;
 };
+
 
 // Load from existing Chroma collection
 const loadExistingVectorstore = async () => {
